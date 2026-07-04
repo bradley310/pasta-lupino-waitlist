@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
-const WAIT_OPTIONS = [10, 15, 20, 25, 30, 40, 45, 60];
+const WAIT_OPTIONS = [10,20,30,40,50,60,70,80,90,100,110,120];
 
 function formatPhone(val) {
   const digits = val.replace(/\D/g, '').slice(0, 10);
@@ -28,24 +28,21 @@ const STATUS_COLORS = {
 };
 
 const C = {
-  bg: '#f5ede0',
-  bgCard: '#ede0cf',
-  border: '#c4a882',
-  accent: '#b85c2a',
-  navy: '#2b2b3b',
-  text: '#2b1f10',
-  textMid: '#7a5c3a',
-  textLight: '#a08060',
+  bg: '#f5ede0', bgCard: '#ede0cf', border: '#c4a882',
+  accent: '#b85c2a', navy: '#2b2b3b', text: '#2b1f10',
+  textMid: '#7a5c3a', textLight: '#a08060',
 };
 
 export default function WaitlistApp() {
   const [entries, setEntries] = useState([]);
   const [form, setForm] = useState({ name: '', phone: '', wait: 20, guests: 2 });
   const [tableInput, setTableInput] = useState({});
+  const [noteInput, setNoteInput] = useState({});
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState({});
   const [toast, setToast] = useState(null);
   const [tick, setTick] = useState(0);
+  const noteTimers = useRef({});
 
   const fetchEntries = useCallback(async () => {
     try {
@@ -53,18 +50,24 @@ export default function WaitlistApp() {
       if (res.ok) {
         const data = await res.json();
         setEntries(data);
+        // Sync note inputs from server without overwriting ones being typed
+        setNoteInput(prev => {
+          const updated = { ...prev };
+          data.forEach(e => {
+            if (!(e.id in updated)) updated[e.id] = e.note || '';
+          });
+          return updated;
+        });
       }
     } catch {}
   }, []);
 
-  // Poll every 4 seconds
   useEffect(() => {
     fetchEntries();
     const id = setInterval(fetchEntries, 4000);
     return () => clearInterval(id);
   }, [fetchEntries]);
 
-  // Tick every 30s to update wait times
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 30000);
     return () => clearInterval(id);
@@ -82,6 +85,15 @@ export default function WaitlistApp() {
       body: JSON.stringify(body),
     });
     return res.json();
+  }
+
+  function handleNoteChange(id, value) {
+    setNoteInput(prev => ({ ...prev, [id]: value }));
+    // Debounce save — wait 1 second after typing stops
+    clearTimeout(noteTimers.current[id]);
+    noteTimers.current[id] = setTimeout(() => {
+      api('/api/update-note', { id, note: value });
+    }, 1000);
   }
 
   async function addEntry() {
@@ -120,7 +132,8 @@ export default function WaitlistApp() {
     await fetchEntries();
   }
 
-  const active = entries.filter(e => e.status !== 'seated');
+  const cancelled = entries.filter(e => e.status === 'cancelled');
+  const active = entries.filter(e => e.status !== 'seated' && e.status !== 'cancelled');
   const seated = entries.filter(e => e.status === 'seated');
   const phoneValid = form.phone.replace(/\D/g, '').length === 10;
   const canAdd = form.name.trim().length > 0 && phoneValid;
@@ -135,15 +148,31 @@ export default function WaitlistApp() {
           borderRadius: 10, padding: '12px 20px', zIndex: 999,
           color: toast.color, fontWeight: 'bold', fontSize: 14,
           boxShadow: '0 4px 20px rgba(0,0,0,0.25)', whiteSpace: 'nowrap',
-        }}>
-          {toast.msg}
-        </div>
+        }}>{toast.msg}</div>
       )}
 
-      <div style={{
-        background: C.navy, borderBottom: `3px solid ${C.accent}`,
-        padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14,
-      }}>
+      {/* Cancellation alerts */}
+      {cancelled.map(entry => (
+        <div key={entry.id} style={{
+          background: '#7f1d1d', borderBottom: '3px solid #ef4444',
+          padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{ fontSize: 22 }}>❌</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 'bold', color: '#fca5a5', fontSize: 16 }}>{entry.name} cancelled</div>
+            <div style={{ color: '#fca5a5', fontSize: 13, opacity: 0.8 }}>
+              Party of {entry.guests} · {entry.cancelledAt ? timeAgo(entry.cancelledAt) : ''}
+            </div>
+          </div>
+          <button onClick={() => remove(entry.id)} style={{
+            background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8,
+            padding: '8px 16px', fontSize: 13, fontWeight: 'bold', fontFamily: 'Georgia, serif', cursor: 'pointer',
+          }}>Dismiss</button>
+        </div>
+      ))}
+
+      {/* Header */}
+      <div style={{ background: C.navy, borderBottom: `3px solid ${C.accent}`, padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
         <img src="/logo.png" alt="Pasta Lupino" style={{ height: 64, width: 64, objectFit: 'contain', borderRadius: 6 }} />
         <div>
           <div style={{ fontSize: 20, fontWeight: 'bold', letterSpacing: 1, color: C.bg }}>Pasta Lupino</div>
@@ -157,37 +186,30 @@ export default function WaitlistApp() {
 
       <div style={{ padding: '20px 16px', maxWidth: 520, margin: '0 auto' }}>
 
+        {/* Add Form */}
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, padding: '18px 16px', marginBottom: 24, boxShadow: '0 2px 8px rgba(43,31,16,0.08)' }}>
           <div style={{ fontSize: 12, fontWeight: 'bold', letterSpacing: 2, color: C.accent, marginBottom: 14, textTransform: 'uppercase' }}>Add to Waitlist</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <input
-              placeholder="Guest name"
-              value={form.name}
+            <input placeholder="Guest name" value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
-              style={inputStyle}
-            />
-            <input
-              placeholder="Phone number"
-              value={form.phone}
-              inputMode="tel"
+              style={inputStyle} />
+            <input placeholder="Phone number" value={form.phone} inputMode="tel"
               onChange={e => setForm(f => ({ ...f, phone: formatPhone(e.target.value) }))}
               onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
-              style={{ ...inputStyle, borderColor: form.phone && !phoneValid ? '#dc2626' : C.border }}
-            />
+              style={{ ...inputStyle, borderColor: form.phone && !phoneValid ? '#dc2626' : C.border }} />
 
             <div>
               <div style={labelStyle}>Guests</div>
-              <div style={{ display: 'flex', gap: 6 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {[1,2,3,4,5,6,7,8,9,10].map(n => (
                   <button key={n} onClick={() => setForm(f => ({ ...f, guests: n }))} style={{
-                    width: 36, height: 36, borderRadius: 8, border: '1px solid',
-                    fontSize: 14, cursor: 'pointer', fontFamily: 'Georgia, serif',
+                    width: 36, height: 36, borderRadius: 8, border: '1px solid', fontSize: 14,
+                    cursor: 'pointer', fontFamily: 'Georgia, serif',
                     fontWeight: form.guests === n ? 'bold' : 'normal',
                     background: form.guests === n ? C.accent : 'transparent',
                     borderColor: form.guests === n ? C.accent : C.border,
-                    color: form.guests === n ? '#fff' : C.textMid,
-                    transition: 'all 0.15s',
+                    color: form.guests === n ? '#fff' : C.textMid, transition: 'all 0.15s',
                   }}>{n}</button>
                 ))}
               </div>
@@ -198,13 +220,12 @@ export default function WaitlistApp() {
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {WAIT_OPTIONS.map(w => (
                   <button key={w} onClick={() => setForm(f => ({ ...f, wait: w }))} style={{
-                    padding: '6px 12px', borderRadius: 20, border: '1px solid', fontSize: 13,
+                    padding: '6px 10px', borderRadius: 20, border: '1px solid', fontSize: 12,
                     cursor: 'pointer', fontFamily: 'Georgia, serif',
                     background: form.wait === w ? C.accent : 'transparent',
                     borderColor: form.wait === w ? C.accent : C.border,
                     color: form.wait === w ? '#fff' : C.textMid,
-                    fontWeight: form.wait === w ? 'bold' : 'normal',
-                    transition: 'all 0.15s',
+                    fontWeight: form.wait === w ? 'bold' : 'normal', transition: 'all 0.15s',
                   }}>{w}m</button>
                 ))}
               </div>
@@ -223,6 +244,7 @@ export default function WaitlistApp() {
           </div>
         </div>
 
+        {/* Active Queue */}
         {active.length > 0 && (
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 11, color: C.textLight, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 }}>
@@ -243,7 +265,7 @@ export default function WaitlistApp() {
                     borderRadius: 10, padding: '14px 14px 12px',
                     boxShadow: '0 1px 4px rgba(43,31,16,0.07)',
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
                       <div style={{
                         width: 28, height: 28, borderRadius: '50%', background: C.navy,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -260,6 +282,49 @@ export default function WaitlistApp() {
                         <div style={{ fontSize: 11, color: C.textLight }}>waited</div>
                       </div>
                     </div>
+
+                    {/* Progress bar */}
+                    {(() => {
+                      const pct = Math.min((waited / entry.wait) * 100, 100);
+                      const remaining = entry.wait - waited;
+                      return (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                            <span style={{ fontSize: 11, color: C.textLight }}>
+                              Quoted {entry.wait}m
+                            </span>
+                            <span style={{ fontSize: 11, fontWeight: 'bold', color: overdue ? '#ef4444' : remaining <= 5 ? '#d97706' : '#15803d' }}>
+                              {overdue ? `${Math.abs(remaining)}m overdue` : `${remaining}m remaining`}
+                            </span>
+                          </div>
+                          <div style={{ background: '#e5d5c0', borderRadius: 999, height: 6, overflow: 'hidden' }}>
+                            <div style={{
+                              height: '100%',
+                              width: `${pct}%`,
+                              borderRadius: 999,
+                              background: overdue ? '#ef4444' : waited > entry.wait * 0.8 ? '#d97706' : '#22c55e',
+                              transition: 'width 0.5s ease',
+                            }} />
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Notes field */}
+                    <input
+                      placeholder="Notes (allergies, preferences, VIP...)"
+                      value={noteInput[entry.id] || ''}
+                      onChange={e => handleNoteChange(entry.id, e.target.value)}
+                      style={{
+                        ...inputStyle,
+                        fontSize: 12,
+                        padding: '7px 10px',
+                        marginBottom: 8,
+                        color: C.textMid,
+                        background: overdue ? '#fff7f7' : '#f9f5ef',
+                        borderColor: overdue ? '#fca5a5' : C.border,
+                      }}
+                    />
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                       <div style={{ width: 7, height: 7, borderRadius: '50%', background: sc.dot }} />
@@ -314,6 +379,7 @@ export default function WaitlistApp() {
           </div>
         )}
 
+        {/* Seated */}
         {seated.length > 0 && (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -338,6 +404,7 @@ export default function WaitlistApp() {
                     <span style={{ fontWeight: 'bold', color: C.textMid }}>{entry.name}</span>
                     {entry.table && <span style={{ fontSize: 12, color: C.textLight, marginLeft: 8 }}>Table {entry.table}</span>}
                     <span style={{ fontSize: 12, color: C.textLight, marginLeft: 8 }}>{entry.guests} guests</span>
+                    {entry.note && <span style={{ fontSize: 11, color: C.textLight, marginLeft: 8, fontStyle: 'italic' }}>{entry.note}</span>}
                   </div>
                   <div style={{ fontSize: 11, color: C.textLight }}>{entry.seatedAt ? timeAgo(entry.seatedAt) : ''}</div>
                   <button onClick={() => remove(entry.id)} style={{ background: 'none', border: 'none', color: C.textLight, cursor: 'pointer', fontSize: 14 }}>✕</button>
@@ -356,12 +423,5 @@ const inputStyle = {
   padding: '10px 12px', fontSize: 15, color: '#2b1f10', fontFamily: 'Georgia, serif',
   outline: 'none', width: '100%', boxSizing: 'border-box',
 };
-
-const labelStyle = {
-  fontSize: 11, color: '#a08060', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1,
-};
-
-const actionBtn = {
-  border: '1px solid', borderRadius: 7, padding: '8px 12px', fontSize: 13,
-  fontFamily: 'Georgia, serif', fontWeight: 'bold', letterSpacing: 0.3,
-};
+const labelStyle = { fontSize: 11, color: '#a08060', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 };
+const actionBtn = { border: '1px solid', borderRadius: 7, padding: '8px 12px', fontSize: 13, fontFamily: 'Georgia, serif', fontWeight: 'bold', letterSpacing: 0.3 };
