@@ -12,14 +12,19 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { name, phone, guests, wait } = req.body;
+    const { name, phone, guests, wait, countryCode } = req.body;
+    // Combine country code with number for Twilio
+    const digits = phone.replace(/\D/g, '');
+    const fullPhone = countryCode && countryCode !== '+1'
+      ? `${countryCode}${digits}`
+      : digits.length === 10 ? `+1${digits}` : `+${digits}`;
     if (!name || !phone) return res.status(400).json({ error: 'Missing fields' });
 
     const cancelToken = generateToken();
     const entry = {
       id: Date.now().toString(),
       name: name.trim(),
-      phone,
+      phone: fullPhone,
       guests,
       wait,
       addedAt: Date.now(),

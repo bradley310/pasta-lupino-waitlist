@@ -2,6 +2,29 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 const WAIT_OPTIONS = [10,20,30,40,50,60,70,80,90,100,110,120];
 
+const COUNTRY_CODES = [
+  { code: '+1',   label: '🇨🇦🇺🇸 CA/US +1' },
+  { code: '+44',  label: '🇬🇧 UK +44' },
+  { code: '+61',  label: '🇦🇺 AU +61' },
+  { code: '+64',  label: '🇳🇿 NZ +64' },
+  { code: '+49',  label: '🇩🇪 DE +49' },
+  { code: '+33',  label: '🇫🇷 FR +33' },
+  { code: '+81',  label: '🇯🇵 JP +81' },
+  { code: '+86',  label: '🇨🇳 CN +86' },
+  { code: '+82',  label: '🇰🇷 KR +82' },
+  { code: '+52',  label: '🇲🇽 MX +52' },
+  { code: '+55',  label: '🇧🇷 BR +55' },
+  { code: '+31',  label: '🇳🇱 NL +31' },
+  { code: '+41',  label: '🇨🇭 CH +41' },
+  { code: '+46',  label: '🇸🇪 SE +46' },
+  { code: '+47',  label: '🇳🇴 NO +47' },
+  { code: '+45',  label: '🇩🇰 DK +45' },
+  { code: '+39',  label: '🇮🇹 IT +39' },
+  { code: '+34',  label: '🇪🇸 ES +34' },
+  { code: '+972', label: '🇮🇱 IL +972' },
+  { code: '+65',  label: '🇸🇬 SG +65' },
+];
+
 function formatPhone(val) {
   const digits = val.replace(/\D/g, '').slice(0, 10);
   if (digits.length <= 3) return digits;
@@ -35,7 +58,7 @@ const C = {
 
 export default function WaitlistApp() {
   const [entries, setEntries] = useState([]);
-  const [form, setForm] = useState({ name: '', phone: '', wait: 20, guests: 2 });
+  const [form, setForm] = useState({ name: '', phone: '', wait: 20, guests: 2, countryCode: '+1' });
   const [tableInput, setTableInput] = useState({});
   const [noteInput, setNoteInput] = useState({});
   const [loading, setLoading] = useState(false);
@@ -101,7 +124,7 @@ export default function WaitlistApp() {
     setLoading(true);
     try {
       await api('/api/waitlist', form);
-      setForm({ name: '', phone: '', wait: 20, guests: 2 });
+      setForm(f => ({ name: '', phone: '', wait: 20, guests: 2, countryCode: f.countryCode }));
       await fetchEntries();
       showToast(`${form.name.trim()} added — text sent`);
     } catch {
@@ -135,7 +158,9 @@ export default function WaitlistApp() {
   const cancelled = entries.filter(e => e.status === 'cancelled');
   const active = entries.filter(e => e.status !== 'seated' && e.status !== 'cancelled');
   const seated = entries.filter(e => e.status === 'seated');
-  const phoneValid = form.phone.replace(/\D/g, '').length === 10;
+  const phoneValid = form.countryCode === '+1'
+    ? form.phone.replace(/\D/g, '').length === 10
+    : form.phone.replace(/\D/g, '').length >= 6;
   const canAdd = form.name.trim().length > 0 && phoneValid;
 
   return (
@@ -194,10 +219,33 @@ export default function WaitlistApp() {
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
               style={inputStyle} />
-            <input placeholder="Phone number" value={form.phone} inputMode="tel"
-              onChange={e => setForm(f => ({ ...f, phone: formatPhone(e.target.value) }))}
-              onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
-              style={{ ...inputStyle, borderColor: form.phone && !phoneValid ? '#dc2626' : C.border }} />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select
+                value={form.countryCode}
+                onChange={e => setForm(f => ({ ...f, countryCode: e.target.value, phone: '' }))}
+                style={{
+                  background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8,
+                  padding: '10px 8px', fontSize: 12, color: C.text,
+                  fontFamily: 'Georgia, serif', outline: 'none', flexShrink: 0,
+                  maxWidth: 140, cursor: 'pointer',
+                }}
+              >
+                {COUNTRY_CODES.map(c => (
+                  <option key={c.code} value={c.code}>{c.label}</option>
+                ))}
+              </select>
+              <input
+                placeholder={form.countryCode === '+1' ? "(604) 555-0123" : "Local number"}
+                value={form.phone}
+                inputMode="tel"
+                onChange={e => {
+                  const val = e.target.value;
+                  setForm(f => ({ ...f, phone: f.countryCode === '+1' ? formatPhone(val) : val.replace(/[^\d\s\-().]/g, '') }));
+                }}
+                onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
+                style={{ ...inputStyle, flex: 1, borderColor: form.phone && !phoneValid ? '#dc2626' : C.border }}
+              />
+            </div>
 
             <div>
               <div style={labelStyle}>Guests</div>
