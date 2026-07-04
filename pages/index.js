@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from 'react';
 
 const WAIT_OPTIONS = [10, 15, 20, 25, 30, 40, 45, 60];
 
 function formatPhone(val) {
-  const digits = val.replace(/\D/g, "").slice(0, 10);
+  const digits = val.replace(/\D/g, '').slice(0, 10);
   if (digits.length <= 3) return digits;
   if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
@@ -22,147 +22,149 @@ function minutesWaiting(ts) {
 }
 
 const STATUS_COLORS = {
-  waiting: { bg: "#fff8ed", dot: "#f59e0b", label: "Waiting" },
-  notified: { bg: "#eff6ff", dot: "#3b82f6", label: "Notified" },
-  seated: { bg: "#f0fdf4", dot: "#22c55e", label: "Seated" },
+  waiting: { dot: '#b85c2a', label: 'Waiting' },
+  notified: { dot: '#3b82f6', label: 'Notified' },
+  seated: { dot: '#22c55e', label: 'Seated' },
+};
+
+const C = {
+  bg: '#f5ede0',
+  bgCard: '#ede0cf',
+  border: '#c4a882',
+  accent: '#b85c2a',
+  navy: '#2b2b3b',
+  text: '#2b1f10',
+  textMid: '#7a5c3a',
+  textLight: '#a08060',
 };
 
 export default function WaitlistApp() {
-  const [entries, setEntries] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("pl_waitlist") || "[]"); } catch { return []; }
-  });
-  const [form, setForm] = useState({ name: "", phone: "", wait: 20, guests: 2 });
-  const [tableInput, setTableInput] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("pl_tableInput") || "{}"); } catch { return {}; }
-  });
+  const [entries, setEntries] = useState([]);
+  const [form, setForm] = useState({ name: '', phone: '', wait: 20, guests: 2 });
+  const [tableInput, setTableInput] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState({});
+  const [toast, setToast] = useState(null);
   const [tick, setTick] = useState(0);
-  const [notifLog, setNotifLog] = useState([]);
 
-  // Persist entries to localStorage whenever they change
+  const fetchEntries = useCallback(async () => {
+    try {
+      const res = await fetch('/api/waitlist');
+      if (res.ok) {
+        const data = await res.json();
+        setEntries(data);
+      }
+    } catch {}
+  }, []);
+
+  // Poll every 4 seconds
   useEffect(() => {
-    try { localStorage.setItem("pl_waitlist", JSON.stringify(entries)); } catch {}
-  }, [entries]);
+    fetchEntries();
+    const id = setInterval(fetchEntries, 4000);
+    return () => clearInterval(id);
+  }, [fetchEntries]);
 
-  useEffect(() => {
-    try { localStorage.setItem("pl_tableInput", JSON.stringify(tableInput)); } catch {}
-  }, [tableInput]);
-
-  // Tick every 30s to refresh wait times
+  // Tick every 30s to update wait times
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 30000);
     return () => clearInterval(id);
   }, []);
 
-  function addEntry() {
-    if (!form.name.trim() || form.phone.replace(/\D/g, "").length < 10) return;
-    setEntries(prev => [
-      ...prev,
-      {
-        id: Date.now(),
-        name: form.name.trim(),
-        phone: form.phone,
-        wait: form.wait,
-        guests: form.guests,
-        addedAt: Date.now(),
-        status: "waiting",
-        table: "",
-      },
-    ]);
-    setForm({ name: "", phone: "", wait: 20, guests: 2 });
+  function showToast(msg, color = C.accent) {
+    setToast({ msg, color });
+    setTimeout(() => setToast(null), 4000);
   }
 
-  function notify(id) {
-    const entry = entries.find(e => e.id === id);
-    if (!entry) return;
-    const digits = entry.phone.replace(/\D/g, "");
-    const msg = encodeURIComponent(
-      `Hi ${entry.name}! Your table at Pasta Lupino is ready. Please come in now. See you soon! 🍝`
-    );
-    window.open(`sms:+1${digits}?body=${msg}`, "_blank");
-    setEntries(prev =>
-      prev.map(e => (e.id === id ? { ...e, status: "notified", notifiedAt: Date.now() } : e))
-    );
-    setNotifLog(prev => [
-      { id, name: entry.name, at: Date.now() },
-      ...prev.slice(0, 9),
-    ]);
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.json();
   }
 
-  function seat(id) {
-    const tbl = tableInput[id] || "";
-    setEntries(prev =>
-      prev.map(e => (e.id === id ? { ...e, status: "seated", table: tbl, seatedAt: Date.now() } : e))
-    );
+  async function addEntry() {
+    if (!form.name.trim() || form.phone.replace(/\D/g, '').length < 10) return;
+    setLoading(true);
+    try {
+      await api('/api/waitlist', form);
+      setForm({ name: '', phone: '', wait: 20, guests: 2 });
+      await fetchEntries();
+      showToast(`${form.name.trim()} added — text sent`);
+    } catch {
+      showToast('Something went wrong', '#dc2626');
+    }
+    setLoading(false);
   }
 
-  function remove(id) {
-    setEntries(prev => prev.filter(e => e.id !== id));
+  async function notify(entry) {
+    setActionLoading(p => ({ ...p, [entry.id + '_notify']: true }));
+    try {
+      const res = await api('/api/notify', { id: entry.id });
+      if (res.error) showToast('Text failed — check Twilio', '#dc2626');
+      else { await fetchEntries(); showToast(`${entry.name} notified`); }
+    } catch { showToast('Something went wrong', '#dc2626'); }
+    setActionLoading(p => ({ ...p, [entry.id + '_notify']: false }));
   }
 
-  function updateTable(id, val) {
-    setTableInput(prev => ({ ...prev, [id]: val }));
+  async function seat(entry) {
+    setActionLoading(p => ({ ...p, [entry.id + '_seat']: true }));
+    await api('/api/seat', { id: entry.id, table: tableInput[entry.id] || '' });
+    await fetchEntries();
+    setActionLoading(p => ({ ...p, [entry.id + '_seat']: false }));
   }
 
-  const active = entries.filter(e => e.status !== "seated");
-  const seated = entries.filter(e => e.status === "seated");
+  async function remove(id) {
+    await api('/api/remove', { id });
+    await fetchEntries();
+  }
 
-  const phoneValid = form.phone.replace(/\D/g, "").length === 10;
-  const nameValid = form.name.trim().length > 0;
-  const canAdd = phoneValid && nameValid;
+  const active = entries.filter(e => e.status !== 'seated');
+  const seated = entries.filter(e => e.status === 'seated');
+  const phoneValid = form.phone.replace(/\D/g, '').length === 10;
+  const canAdd = form.name.trim().length > 0 && phoneValid;
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "#1a1208",
-      fontFamily: "'Georgia', serif",
-      color: "#f5ede0",
-      padding: "0",
-    }}>
-      {/* Header */}
-      <div style={{
-        background: "linear-gradient(135deg, #2d1f0e 0%, #1a1208 100%)",
-        borderBottom: "1px solid #3d2a14",
-        padding: "20px 24px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 14,
-      }}>
-        <div style={{ fontSize: 28 }}>🍝</div>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: "bold", letterSpacing: 1, color: "#f0c060" }}>
-            Pasta Lupino
-          </div>
-          <div style={{ fontSize: 12, color: "#a0845a", letterSpacing: 2, textTransform: "uppercase" }}>
-            Walk-in Waitlist
-          </div>
+    <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Georgia, serif', color: C.text }}>
+
+      {toast && (
+        <div style={{
+          position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
+          background: C.navy, border: `1px solid ${toast.color}`,
+          borderRadius: 10, padding: '12px 20px', zIndex: 999,
+          color: toast.color, fontWeight: 'bold', fontSize: 14,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)', whiteSpace: 'nowrap',
+        }}>
+          {toast.msg}
         </div>
-        <div style={{ marginLeft: "auto", textAlign: "right" }}>
-          <div style={{ fontSize: 26, fontWeight: "bold", color: "#f0c060" }}>{active.length}</div>
-          <div style={{ fontSize: 11, color: "#a0845a", textTransform: "uppercase", letterSpacing: 1 }}>
-            Waiting
-          </div>
+      )}
+
+      <div style={{
+        background: C.navy, borderBottom: `3px solid ${C.accent}`,
+        padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 14,
+      }}>
+        <img src="/logo.png" alt="Pasta Lupino" style={{ height: 64, width: 64, objectFit: 'contain', borderRadius: 6 }} />
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 'bold', letterSpacing: 1, color: C.bg }}>Pasta Lupino</div>
+          <div style={{ fontSize: 11, color: C.textLight, letterSpacing: 2, textTransform: 'uppercase' }}>Walk-in Waitlist</div>
+        </div>
+        <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+          <div style={{ fontSize: 28, fontWeight: 'bold', color: C.accent }}>{active.length}</div>
+          <div style={{ fontSize: 11, color: C.textLight, textTransform: 'uppercase', letterSpacing: 1 }}>Waiting</div>
         </div>
       </div>
 
-      <div style={{ padding: "20px 16px", maxWidth: 520, margin: "0 auto" }}>
-        {/* Add Form */}
-        <div style={{
-          background: "#241609",
-          border: "1px solid #3d2a14",
-          borderRadius: 12,
-          padding: "18px 16px",
-          marginBottom: 24,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: "bold", letterSpacing: 1, color: "#f0c060", marginBottom: 14, textTransform: "uppercase" }}>
-            Add to Waitlist
-          </div>
+      <div style={{ padding: '20px 16px', maxWidth: 520, margin: '0 auto' }}>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, padding: '18px 16px', marginBottom: 24, boxShadow: '0 2px 8px rgba(43,31,16,0.08)' }}>
+          <div style={{ fontSize: 12, fontWeight: 'bold', letterSpacing: 2, color: C.accent, marginBottom: 14, textTransform: 'uppercase' }}>Add to Waitlist</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <input
               placeholder="Guest name"
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              onKeyDown={e => e.key === "Enter" && canAdd && addEntry()}
+              onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
               style={inputStyle}
             />
             <input
@@ -170,209 +172,130 @@ export default function WaitlistApp() {
               value={form.phone}
               inputMode="tel"
               onChange={e => setForm(f => ({ ...f, phone: formatPhone(e.target.value) }))}
-              onKeyDown={e => e.key === "Enter" && canAdd && addEntry()}
-              style={{
-                ...inputStyle,
-                borderColor: form.phone && !phoneValid ? "#c0392b" : "#3d2a14",
-              }}
+              onKeyDown={e => e.key === 'Enter' && canAdd && addEntry()}
+              style={{ ...inputStyle, borderColor: form.phone && !phoneValid ? '#dc2626' : C.border }}
             />
 
             <div>
-              <div style={{ fontSize: 11, color: "#a0845a", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>
-                Guests
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={labelStyle}>Guests</div>
+              <div style={{ display: 'flex', gap: 6 }}>
                 {[1,2,3,4,5,6,7,8].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setForm(f => ({ ...f, guests: n }))}
-                    style={{
-                      width: 36, height: 36,
-                      borderRadius: 8,
-                      border: "1px solid",
-                      fontSize: 14,
-                      cursor: "pointer",
-                      fontFamily: "Georgia, serif",
-                      fontWeight: form.guests === n ? "bold" : "normal",
-                      background: form.guests === n ? "#f0c060" : "transparent",
-                      borderColor: form.guests === n ? "#f0c060" : "#3d2a14",
-                      color: form.guests === n ? "#1a1208" : "#a0845a",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    {n}
-                  </button>
+                  <button key={n} onClick={() => setForm(f => ({ ...f, guests: n }))} style={{
+                    width: 36, height: 36, borderRadius: 8, border: '1px solid',
+                    fontSize: 14, cursor: 'pointer', fontFamily: 'Georgia, serif',
+                    fontWeight: form.guests === n ? 'bold' : 'normal',
+                    background: form.guests === n ? C.accent : 'transparent',
+                    borderColor: form.guests === n ? C.accent : C.border,
+                    color: form.guests === n ? '#fff' : C.textMid,
+                    transition: 'all 0.15s',
+                  }}>{n}</button>
                 ))}
               </div>
             </div>
 
             <div>
-              <div style={{ fontSize: 11, color: "#a0845a", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>
-                Quoted wait
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <div style={labelStyle}>Quoted wait</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {WAIT_OPTIONS.map(w => (
-                  <button
-                    key={w}
-                    onClick={() => setForm(f => ({ ...f, wait: w }))}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: 20,
-                      border: "1px solid",
-                      fontSize: 13,
-                      cursor: "pointer",
-                      fontFamily: "Georgia, serif",
-                      transition: "all 0.15s",
-                      background: form.wait === w ? "#f0c060" : "transparent",
-                      borderColor: form.wait === w ? "#f0c060" : "#3d2a14",
-                      color: form.wait === w ? "#1a1208" : "#a0845a",
-                      fontWeight: form.wait === w ? "bold" : "normal",
-                    }}
-                  >
-                    {w}m
-                  </button>
+                  <button key={w} onClick={() => setForm(f => ({ ...f, wait: w }))} style={{
+                    padding: '6px 12px', borderRadius: 20, border: '1px solid', fontSize: 13,
+                    cursor: 'pointer', fontFamily: 'Georgia, serif',
+                    background: form.wait === w ? C.accent : 'transparent',
+                    borderColor: form.wait === w ? C.accent : C.border,
+                    color: form.wait === w ? '#fff' : C.textMid,
+                    fontWeight: form.wait === w ? 'bold' : 'normal',
+                    transition: 'all 0.15s',
+                  }}>{w}m</button>
                 ))}
               </div>
             </div>
 
-            <button
-              onClick={addEntry}
-              disabled={!canAdd}
-              style={{
-                background: canAdd ? "#f0c060" : "#2d1f0e",
-                color: canAdd ? "#1a1208" : "#5a4030",
-                border: "none",
-                borderRadius: 8,
-                padding: "12px",
-                fontSize: 15,
-                fontWeight: "bold",
-                fontFamily: "Georgia, serif",
-                cursor: canAdd ? "pointer" : "not-allowed",
-                letterSpacing: 0.5,
-                transition: "all 0.15s",
-                marginTop: 2,
-              }}
-            >
-              + Add Guest
+            <button onClick={addEntry} disabled={!canAdd || loading} style={{
+              background: canAdd && !loading ? C.accent : C.border,
+              color: canAdd && !loading ? '#fff' : C.textLight,
+              border: 'none', borderRadius: 8, padding: '12px', fontSize: 15,
+              fontWeight: 'bold', fontFamily: 'Georgia, serif',
+              cursor: canAdd && !loading ? 'pointer' : 'not-allowed',
+              transition: 'all 0.15s', marginTop: 2, letterSpacing: 0.5,
+            }}>
+              {loading ? 'Adding...' : '+ Add Guest'}
             </button>
           </div>
         </div>
 
-        {/* Active Queue */}
         {active.length > 0 && (
           <div style={{ marginBottom: 24 }}>
-            <div style={{ fontSize: 11, color: "#a0845a", letterSpacing: 2, textTransform: "uppercase", marginBottom: 12 }}>
-              Queue — {active.length} {active.length === 1 ? "party" : "parties"}
+            <div style={{ fontSize: 11, color: C.textLight, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 }}>
+              Queue — {active.length} {active.length === 1 ? 'party' : 'parties'}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {active.map((entry, i) => {
                 const waited = minutesWaiting(entry.addedAt);
                 const overdue = waited > entry.wait;
                 const sc = STATUS_COLORS[entry.status];
+                const notifying = actionLoading[entry.id + '_notify'];
+                const seating = actionLoading[entry.id + '_seat'];
                 return (
                   <div key={entry.id} style={{
-                    background: overdue ? "#2d1209" : "#241609",
-                    border: `1px solid ${overdue ? "#7f1d1d" : "#3d2a14"}`,
-                    borderLeft: `4px solid ${overdue ? "#ef4444" : entry.status === "notified" ? "#3b82f6" : "#f0c060"}`,
-                    borderRadius: 10,
-                    padding: "14px 14px 12px",
-                    transition: "all 0.2s",
+                    background: overdue ? '#fff7f7' : '#fff',
+                    border: `1px solid ${overdue ? '#fca5a5' : C.border}`,
+                    borderLeft: `4px solid ${overdue ? '#ef4444' : entry.status === 'notified' ? '#3b82f6' : C.accent}`,
+                    borderRadius: 10, padding: '14px 14px 12px',
+                    boxShadow: '0 1px 4px rgba(43,31,16,0.07)',
                   }}>
-                    {/* Top row */}
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                       <div style={{
-                        width: 28, height: 28, borderRadius: "50%",
-                        background: "#2d1f0e",
-                        border: "1px solid #3d2a14",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 12, color: "#f0c060", fontWeight: "bold", flexShrink: 0,
-                      }}>
-                        {i + 1}
-                      </div>
+                        width: 28, height: 28, borderRadius: '50%', background: C.navy,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 12, color: C.bg, fontWeight: 'bold', flexShrink: 0,
+                      }}>{i + 1}</div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: "bold", fontSize: 16, color: "#f5ede0" }}>{entry.name}</div>
-                        <div style={{ fontSize: 12, color: "#a0845a", marginTop: 2 }}>
-                          {entry.phone} · {entry.guests} {entry.guests === 1 ? "guest" : "guests"} · Quoted {entry.wait}m
+                        <div style={{ fontWeight: 'bold', fontSize: 16, color: C.text }}>{entry.name}</div>
+                        <div style={{ fontSize: 12, color: C.textLight, marginTop: 2 }}>
+                          {entry.phone} · {entry.guests} {entry.guests === 1 ? 'guest' : 'guests'} · Quoted {entry.wait}m
                         </div>
                       </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div style={{
-                          fontSize: 18,
-                          fontWeight: "bold",
-                          color: overdue ? "#ef4444" : waited > entry.wait * 0.8 ? "#f59e0b" : "#f5ede0",
-                        }}>
-                          {waited}m
-                        </div>
-                        <div style={{ fontSize: 11, color: "#a0845a" }}>waited</div>
+                      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                        <div style={{ fontSize: 18, fontWeight: 'bold', color: overdue ? '#ef4444' : waited > entry.wait * 0.8 ? '#d97706' : C.text }}>{waited}m</div>
+                        <div style={{ fontSize: 11, color: C.textLight }}>waited</div>
                       </div>
                     </div>
 
-                    {/* Status badge */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: sc.dot }} />
-                      <span style={{ fontSize: 11, color: "#a0845a", textTransform: "uppercase", letterSpacing: 1 }}>
-                        {sc.label}
-                        {entry.status === "notified" && entry.notifiedAt && ` · ${timeAgo(entry.notifiedAt)}`}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                      <div style={{ width: 7, height: 7, borderRadius: '50%', background: sc.dot }} />
+                      <span style={{ fontSize: 11, color: C.textLight, textTransform: 'uppercase', letterSpacing: 1 }}>
+                        {sc.label}{entry.status === 'notified' && entry.notifiedAt && ` · ${timeAgo(entry.notifiedAt)}`}
                       </span>
                     </div>
 
-                    {/* Actions */}
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <button
-                        onClick={() => notify(entry.id)}
-                        style={{
-                          ...actionBtn,
-                          background: entry.status === "notified" ? "#1e3a5f" : "#1e3a5f",
-                          borderColor: "#3b82f6",
-                          color: "#93c5fd",
-                          flex: 1,
-                        }}
-                      >
-                        📱 {entry.status === "notified" ? "Re-notify" : "Text Ready"}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button onClick={() => notify(entry)} disabled={notifying} style={{
+                        ...actionBtn, flex: 1, background: '#eff6ff', borderColor: '#93c5fd', color: '#1d4ed8',
+                        cursor: notifying ? 'not-allowed' : 'pointer', opacity: notifying ? 0.6 : 1,
+                      }}>
+                        📱 {notifying ? 'Sending...' : entry.status === 'notified' ? 'Re-notify' : 'Text Ready'}
                       </button>
 
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                         <input
                           placeholder="Table #"
-                          value={tableInput[entry.id] || ""}
-                          onChange={e => updateTable(entry.id, e.target.value)}
-                          style={{
-                            ...inputStyle,
-                            width: 70,
-                            textAlign: "center",
-                            padding: "8px 6px",
-                            fontSize: 14,
-                          }}
+                          value={tableInput[entry.id] || ''}
+                          onChange={e => setTableInput(p => ({ ...p, [entry.id]: e.target.value }))}
+                          style={{ ...inputStyle, width: 70, textAlign: 'center', padding: '8px 6px', fontSize: 14 }}
                         />
-                        <span style={{ fontSize: 9, color: "#4a3020", letterSpacing: 0.5, textTransform: "uppercase" }}>
-                          🔒 staff only
-                        </span>
+                        <span style={{ fontSize: 9, color: C.textLight, letterSpacing: 0.5, textTransform: 'uppercase' }}>🔒 staff only</span>
                       </div>
 
-                      <button
-                        onClick={() => seat(entry.id)}
-                        style={{
-                          ...actionBtn,
-                          background: "#14402a",
-                          borderColor: "#22c55e",
-                          color: "#86efac",
-                        }}
-                      >
-                        ✓ Seat
+                      <button onClick={() => seat(entry)} disabled={seating} style={{
+                        ...actionBtn, background: '#f0fdf4', borderColor: '#86efac', color: '#15803d',
+                        cursor: seating ? 'not-allowed' : 'pointer', opacity: seating ? 0.6 : 1,
+                      }}>
+                        {seating ? '...' : '✓ Seat'}
                       </button>
 
-                      <button
-                        onClick={() => remove(entry.id)}
-                        style={{
-                          ...actionBtn,
-                          background: "transparent",
-                          borderColor: "#3d2a14",
-                          color: "#6b4c2a",
-                          padding: "8px 10px",
-                        }}
-                      >
-                        ✕
-                      </button>
+                      <button onClick={() => remove(entry.id)} style={{
+                        ...actionBtn, background: 'transparent', borderColor: C.border, color: C.textLight, padding: '8px 10px',
+                      }}>✕</button>
                     </div>
                   </div>
                 );
@@ -383,50 +306,41 @@ export default function WaitlistApp() {
 
         {active.length === 0 && (
           <div style={{
-            textAlign: "center",
-            padding: "40px 20px",
-            color: "#4a3020",
-            border: "1px dashed #3d2a14",
-            borderRadius: 12,
-            marginBottom: 24,
+            textAlign: 'center', padding: '40px 20px', color: C.textLight,
+            border: `1px dashed ${C.border}`, borderRadius: 12, marginBottom: 24, background: C.bgCard,
           }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🍷</div>
+            <img src="/logo.png" alt="" style={{ height: 56, opacity: 0.3, marginBottom: 12 }} />
             <div style={{ fontSize: 14 }}>No one waiting right now</div>
           </div>
         )}
 
-        {/* Recently Seated */}
         {seated.length > 0 && (
           <div>
-            <div style={{ fontSize: 11, color: "#4a3020", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>
-              Seated today — {seated.length}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: C.textLight, letterSpacing: 2, textTransform: 'uppercase' }}>
+                Seated today — {seated.length}
+              </div>
+              <button onClick={async () => {
+                for (const e of seated) await api('/api/remove', { id: e.id });
+                await fetchEntries();
+              }} style={{
+                background: 'none', border: `1px solid ${C.border}`, borderRadius: 6,
+                padding: '4px 10px', fontSize: 11, color: C.textLight, cursor: 'pointer', fontFamily: 'Georgia, serif',
+              }}>Clear all</button>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {seated.slice().reverse().map(entry => (
                 <div key={entry.id} style={{
-                  background: "#1a1208",
-                  border: "1px solid #2a1a08",
-                  borderRadius: 8,
-                  padding: "10px 14px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  opacity: 0.6,
+                  background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 8,
+                  padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, opacity: 0.6,
                 }}>
                   <div style={{ flex: 1 }}>
-                    <span style={{ fontWeight: "bold", color: "#7a5a38" }}>{entry.name}</span>
-                    {entry.table && <span style={{ fontSize: 12, color: "#5a3a18", marginLeft: 8 }}>Table {entry.table}</span>}
-                    <span style={{ fontSize: 12, color: "#4a2a08", marginLeft: 8 }}>{entry.guests} guests</span>
+                    <span style={{ fontWeight: 'bold', color: C.textMid }}>{entry.name}</span>
+                    {entry.table && <span style={{ fontSize: 12, color: C.textLight, marginLeft: 8 }}>Table {entry.table}</span>}
+                    <span style={{ fontSize: 12, color: C.textLight, marginLeft: 8 }}>{entry.guests} guests</span>
                   </div>
-                  <div style={{ fontSize: 11, color: "#4a2a08" }}>
-                    {entry.seatedAt ? timeAgo(entry.seatedAt) : ""}
-                  </div>
-                  <button
-                    onClick={() => remove(entry.id)}
-                    style={{ background: "none", border: "none", color: "#4a2a08", cursor: "pointer", fontSize: 14 }}
-                  >
-                    ✕
-                  </button>
+                  <div style={{ fontSize: 11, color: C.textLight }}>{entry.seatedAt ? timeAgo(entry.seatedAt) : ''}</div>
+                  <button onClick={() => remove(entry.id)} style={{ background: 'none', border: 'none', color: C.textLight, cursor: 'pointer', fontSize: 14 }}>✕</button>
                 </div>
               ))}
             </div>
@@ -438,25 +352,16 @@ export default function WaitlistApp() {
 }
 
 const inputStyle = {
-  background: "#1a1208",
-  border: "1px solid #3d2a14",
-  borderRadius: 8,
-  padding: "10px 12px",
-  fontSize: 15,
-  color: "#f5ede0",
-  fontFamily: "Georgia, serif",
-  outline: "none",
-  width: "100%",
-  boxSizing: "border-box",
+  background: '#fff', border: `1px solid #c4a882`, borderRadius: 8,
+  padding: '10px 12px', fontSize: 15, color: '#2b1f10', fontFamily: 'Georgia, serif',
+  outline: 'none', width: '100%', boxSizing: 'border-box',
+};
+
+const labelStyle = {
+  fontSize: 11, color: '#a08060', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1,
 };
 
 const actionBtn = {
-  border: "1px solid",
-  borderRadius: 7,
-  padding: "8px 12px",
-  fontSize: 13,
-  fontFamily: "Georgia, serif",
-  cursor: "pointer",
-  fontWeight: "bold",
-  letterSpacing: 0.3,
+  border: '1px solid', borderRadius: 7, padding: '8px 12px', fontSize: 13,
+  fontFamily: 'Georgia, serif', fontWeight: 'bold', letterSpacing: 0.3,
 };
