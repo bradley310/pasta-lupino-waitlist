@@ -101,7 +101,7 @@ export default function WaitlistApp() {
   async function notify(entry) {
     setActionLoading(p => ({ ...p, [entry.id + '_notify']: true }));
     try {
-      const res = await api('/api/notify', { id: entry.id });
+      const res = await api('/api/notify', { id: entry.id, table: tableInput[entry.id] || '' });
       if (res.error) showToast('Text failed — check Twilio', '#dc2626');
       else { await fetchEntries(); showToast(`${entry.name} notified`); }
     } catch { showToast('Something went wrong', '#dc2626'); }
@@ -179,7 +179,7 @@ export default function WaitlistApp() {
             <div>
               <div style={labelStyle}>Guests</div>
               <div style={{ display: 'flex', gap: 6 }}>
-                {[1,2,3,4,5,6,7,8].map(n => (
+                {[1,2,3,4,5,6,7,8,9,10].map(n => (
                   <button key={n} onClick={() => setForm(f => ({ ...f, guests: n }))} style={{
                     width: 36, height: 36, borderRadius: 8, border: '1px solid',
                     fontSize: 14, cursor: 'pointer', fontFamily: 'Georgia, serif',
