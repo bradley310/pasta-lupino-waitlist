@@ -47,6 +47,7 @@ function minutesWaiting(ts) {
 const STATUS_COLORS = {
   waiting: { dot: '#b85c2a', label: 'Waiting' },
   notified: { dot: '#3b82f6', label: 'Notified' },
+  ontheway: { dot: '#15803d', label: 'On the way!' },
   seated: { dot: '#22c55e', label: 'Seated' },
 };
 
@@ -156,6 +157,7 @@ export default function WaitlistApp() {
   }
 
   const cancelled = entries.filter(e => e.status === 'cancelled');
+  const ontheway = entries.filter(e => e.status === 'ontheway');
   const active = entries.filter(e => e.status !== 'seated' && e.status !== 'cancelled');
   const seated = entries.filter(e => e.status === 'seated');
   const phoneValid = form.countryCode === '+1'
@@ -193,6 +195,40 @@ export default function WaitlistApp() {
             background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8,
             padding: '8px 16px', fontSize: 13, fontWeight: 'bold', fontFamily: 'Georgia, serif', cursor: 'pointer',
           }}>Dismiss</button>
+        </div>
+      ))}
+
+      {/* On the way alerts */}
+      {ontheway.map(entry => (
+        <div key={entry.id} style={{
+          background: '#14532d', borderBottom: '3px solid #22c55e',
+          padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{ fontSize: 22 }}>✅</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 'bold', color: '#86efac', fontSize: 16 }}>
+              {entry.name} is on their way!
+            </div>
+            <div style={{ color: '#86efac', fontSize: 13, opacity: 0.8 }}>
+              Party of {entry.guests}{entry.table ? ` · Table ${entry.table}` : ''} · {entry.confirmedAt ? timeAgo(entry.confirmedAt) : ''}
+            </div>
+          </div>
+          <button
+            onClick={() => seat(entry)}
+            style={{
+              background: '#22c55e', color: '#fff', border: 'none', borderRadius: 8,
+              padding: '8px 14px', fontSize: 13, fontWeight: 'bold',
+              fontFamily: 'Georgia, serif', cursor: 'pointer', marginRight: 6,
+            }}
+          >✓ Seat</button>
+          <button
+            onClick={() => remove(entry.id)}
+            style={{
+              background: 'transparent', border: '1px solid #22c55e', borderRadius: 8,
+              padding: '8px 12px', fontSize: 13, color: '#86efac',
+              fontFamily: 'Georgia, serif', cursor: 'pointer',
+            }}
+          >✕</button>
         </div>
       ))}
 

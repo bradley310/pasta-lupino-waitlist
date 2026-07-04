@@ -10,12 +10,16 @@ export default async function handler(req, res) {
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
   const cancelUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/cancel/${entry.cancelToken}`;
+  const confirmUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/confirm/${entry.cancelToken}`;
   const tableText = table ? `Your table is number ${table}. ` : '';
-  const msg = `Hi ${entry.name}! Your table at Pasta Lupino is ready — please come in now. ${tableText}We'll hold it for 5 minutes. See you soon! 🍝 If you no longer need your table tap here: ${cancelUrl}`;
+
+  const msg = `Hi ${entry.name}! Your table at Pasta Lupino is ready — please come in now. ${tableText}We'll hold it for 5 minutes. 🍝 Tap to confirm you're on your way: ${confirmUrl} — or cancel: ${cancelUrl}`;
 
   try { await sendSMS(entry.phone, msg); } catch (err) { return res.status(500).json({ error: 'SMS failed: ' + err.message }); }
 
-  const updated = entries.map(e => e.id === id ? { ...e, status: 'notified', notifiedAt: Date.now(), table: table || e.table } : e);
+  const updated = entries.map(e =>
+    e.id === id ? { ...e, status: 'notified', notifiedAt: Date.now(), table: table || e.table } : e
+  );
   await saveWaitlist(updated);
 
   return res.json({ ok: true });
