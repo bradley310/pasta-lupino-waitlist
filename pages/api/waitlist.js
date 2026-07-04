@@ -10,40 +10,18 @@ export default async function handler(req, res) {
     const entries = await getWaitlist();
     return res.json(entries);
   }
-
   if (req.method === 'POST') {
     const { name, phone, guests, wait } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'Missing fields' });
-
     const cancelToken = generateToken();
-    const entry = {
-      id: Date.now().toString(),
-      name: name.trim(),
-      phone,
-      guests,
-      wait,
-      addedAt: Date.now(),
-      status: 'waiting',
-      table: '',
-      cancelToken,
-    };
-
+    const entry = { id: Date.now().toString(), name: name.trim(), phone, guests, wait, addedAt: Date.now(), status: 'waiting', table: '', cancelToken };
     const entries = await getWaitlist();
     entries.push(entry);
     await saveWaitlist(entries);
-
-    // Send "you're on the waitlist" SMS
     const cancelUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/cancel/${cancelToken}`;
     const msg = `Hi ${name}! You're on the waitlist at Pasta Lupino — quoted wait is ${wait} mins. We'll text when your table's ready. Reply C to cancel or tap: ${cancelUrl}`;
-
-    try {
-      await sendSMS(phone, msg);
-    } catch (err) {
-      console.error('SMS error on add:', err.message);
-    }
-
+    try { await sendSMS(phone, msg); } catch (err) { console.error('SMS error:', err.message); }
     return res.json(entry);
   }
-
   res.status(405).end();
 }
